@@ -13,9 +13,5 @@ ENV/
 .env
 *.log
 .streamlit/
-*.txt
-*.md
-checkpoints/
-*.db
 *.db-shm
 *.db-wal

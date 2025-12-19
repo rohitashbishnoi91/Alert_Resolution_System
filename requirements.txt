@@ -1,0 +1,12 @@
+langgraph
+langchain
+langchain-openai
+langchain-core
+openai
+streamlit
+pandas
+python-dotenv
+langgraph-checkpoint-sqlite
+aiosqlite
+sqlalchemy
+
