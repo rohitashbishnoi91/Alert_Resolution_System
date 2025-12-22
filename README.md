@@ -15,12 +15,15 @@ An intelligent multi-agent AML (Anti-Money Laundering) investigation platform po
 - **Per-alert conversations** - Each alert maintains its own chat history
 - **Context-aware responses** - AI has full knowledge of customer data, transactions, and alert details
 
-### 🤖 Multi-Agent Investigation Workflow
-- **Supervisor Agent** - Orchestrates the investigation workflow
+### 🤖 Multi-Agent Investigation Workflow (LLM-Powered Orchestration)
+- **Supervisor Agent (LLM Brain)** - GPT-powered orchestrator that decides which agent to invoke next
 - **Investigator Agent** - Analyzes transaction patterns and history
 - **Context Gatherer Agent** - Retrieves KYC data, sanctions, and adverse media
 - **Adjudicator Agent** - Makes final decisions based on SOP rules
 - **AEM Executor** - Executes the resolution action
+- **Conversational Agent** - Handles user queries (routed by Supervisor, uses same tools)
+
+> **True Agentic AI**: The Supervisor uses LLM reasoning (not if-else logic) to decide routing based on investigation state, making intelligent orchestration decisions.
 
 ### 🎯 5 Pre-configured Alert Scenarios
 | Code | Scenario | Description |
@@ -109,7 +112,7 @@ The app will open at `http://localhost:8501`
 Alert_Resolution_System/
 ├── app.py                 # Streamlit Conversational UI
 ├── workflow.py            # LangGraph workflow with checkpointing
-├── agents.py              # Multi-agent definitions
+├── agents.py              # All agents (including ConversationalAgent)
 ├── tools.py               # Agent tools (DB queries, sanctions, KYC)
 ├── state.py               # AgentState definition
 ├── config.py              # Configuration settings
@@ -174,6 +177,46 @@ OPENAI_TEMPERATURE = 0.1
 | `get_kyc_profile` | Context Gatherer | Retrieve customer KYC data |
 | `search_adverse_media` | Context Gatherer | Search OSINT sources |
 | `sanctions_lookup` | Context Gatherer | Check sanctions watchlists |
+
+---
+
+## 🏗️ Architecture
+
+```
+                    ┌─────────────────────┐
+                    │  🧠 SUPERVISOR      │
+                    │   (LLM Brain)       │
+                    │                     │
+                    │ "Which agent next?" │
+                    │  ↓ LLM Reasoning ↓  │
+                    └──────────┬──────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+        ▼                      ▼                      ▼
+  ┌───────────┐         ┌───────────┐          ┌───────────┐
+  │INVESTIGATOR│        │ CONTEXT   │          │ADJUDICATOR│
+  │  (Tools)  │         │ GATHERER  │          │  (SOP)    │
+  └─────┬─────┘         └─────┬─────┘          └─────┬─────┘
+        │                     │                      │
+        └─────────────────────┼──────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────────┐
+                    │ CONVERSATIONAL      │
+                    │    AGENT            │
+                    │ (Same 6 Tools)      │
+                    └─────────────────────┘
+```
+
+**LLM-Powered Orchestration:**
+- Supervisor uses **GPT reasoning** to analyze state and decide next agent
+- Not hardcoded if-else logic - true agentic AI decision making
+- Supervisor provides reasoning for each routing decision
+
+**Two Modes - One LLM Brain:**
+- **Resolve Mode**: Supervisor reasons → Investigator → Context Gatherer → Adjudicator → AEM
+- **Conversation Mode**: Supervisor reasons → Conversational Agent
 
 ---
 

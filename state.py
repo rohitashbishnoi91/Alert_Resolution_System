@@ -1,6 +1,6 @@
 """Agent state definition"""
 
-from typing import TypedDict, Annotated
+from typing import TypedDict, Annotated, Optional
 import operator
 
 
@@ -11,4 +11,9 @@ class AgentState(TypedDict):
     resolution: dict
     next: str
     messages: Annotated[list, operator.add]
+    # Conversation mode fields
+    mode: str  # "resolve" or "conversation"
+    user_query: str  # User's question in conversation mode
+    conversation_history: list  # Previous conversation messages
+    conversation_response: str  # Response from conversational agent
 

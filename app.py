@@ -3,12 +3,48 @@
 import streamlit as st
 from datetime import datetime
 import time
-from workflow import create_aars_workflow
+import json
+import os
+from workflow import create_aars_workflow, run_conversation
 from database.seed_data import TEST_ALERTS, MOCK_CUSTOMER_DB
 from config import SCENARIOS, OPENAI_API_KEY
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-import json
+
+# Persistent conversation storage
+CONVERSATION_FILE = "checkpoints/conversations.json"
+
+def load_conversations():
+    """Load conversations from persistent storage"""
+    if os.path.exists(CONVERSATION_FILE):
+        try:
+            with open(CONVERSATION_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_conversations(conversations):
+    """Save conversations to persistent storage"""
+    os.makedirs(os.path.dirname(CONVERSATION_FILE), exist_ok=True)
+    with open(CONVERSATION_FILE, 'w') as f:
+        json.dump(conversations, f, indent=2)
+
+def load_workflow_histories():
+    """Load workflow histories from persistent storage"""
+    history_file = "checkpoints/workflow_histories.json"
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_workflow_histories(histories):
+    """Save workflow histories to persistent storage"""
+    history_file = "checkpoints/workflow_histories.json"
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+    with open(history_file, 'w') as f:
+        json.dump(histories, f, indent=2)
 
 # Page configuration
 st.set_page_config(
@@ -247,21 +283,25 @@ if 'workflow_app' not in st.session_state:
     st.session_state.workflow_app = None
 if 'current_alert' not in st.session_state:
     st.session_state.current_alert = None
-if 'resolved_alerts' not in st.session_state:
-    st.session_state.resolved_alerts = set()
-if 'pending_alerts' not in st.session_state:
-    st.session_state.pending_alerts = {alert['alert_id'] for alert in TEST_ALERTS}
 if 'processing' not in st.session_state:
     st.session_state.processing = False
 # Store conversation messages per alert (key = alert_id, value = list of messages)
+# Load from persistent storage on startup
 if 'alert_conversations' not in st.session_state:
-    st.session_state.alert_conversations = {}
+    st.session_state.alert_conversations = load_conversations()
 # Store workflow history per alert (key = alert_id, value = workflow chat_history list)
 if 'alert_workflow_histories' not in st.session_state:
-    st.session_state.alert_workflow_histories = {}
+    st.session_state.alert_workflow_histories = load_workflow_histories()
 # Track if user wants to solve the alert
 if 'solving_alert' not in st.session_state:
     st.session_state.solving_alert = None
+# Load resolved alerts from workflow histories (persisted)
+if 'resolved_alerts' not in st.session_state:
+    st.session_state.resolved_alerts = set(st.session_state.alert_workflow_histories.keys())
+# Calculate pending alerts based on resolved
+if 'pending_alerts' not in st.session_state:
+    all_alerts = {alert['alert_id'] for alert in TEST_ALERTS}
+    st.session_state.pending_alerts = all_alerts - st.session_state.resolved_alerts
 
 # Sidebar
 with st.sidebar:
@@ -361,6 +401,9 @@ with st.sidebar:
         st.session_state.alert_conversations = {}
         st.session_state.alert_workflow_histories = {}
         st.session_state.solving_alert = None
+        # Clear persistent storage
+        save_conversations({})
+        save_workflow_histories({})
         st.rerun()
     
     if st.button("🗑️ Clear Chat", use_container_width=True):
@@ -371,7 +414,27 @@ with st.sidebar:
             if current_id in st.session_state.alert_workflow_histories:
                 del st.session_state.alert_workflow_histories[current_id]
             st.session_state.solving_alert = None
+            # Save to persistent storage
+            save_conversations(st.session_state.alert_conversations)
+            save_workflow_histories(st.session_state.alert_workflow_histories)
         st.rerun()
+    
+    if st.button("🧹 Clear Checkpoints", use_container_width=True):
+        import glob
+        checkpoint_dir = "checkpoints"
+        if os.path.exists(checkpoint_dir):
+            # Clear all checkpoint files including conversations
+            for f in glob.glob(os.path.join(checkpoint_dir, "*")):
+                try:
+                    os.remove(f)
+                except:
+                    pass
+            st.session_state.workflow_app = None  # Force workflow recreation
+            st.session_state.alert_conversations = {}
+            st.session_state.alert_workflow_histories = {}
+            st.session_state.resolved_alerts = set()
+            st.success("✅ All checkpoints & conversations cleared!")
+            st.rerun()
     
     # Show Investigation Details in Sidebar (if alert is resolved)
     if st.session_state.current_alert:
@@ -432,65 +495,26 @@ with st.sidebar:
                     
                     st.markdown("---")
 
-# Helper function to get AI response
+# Helper function to get AI response - Uses workflow-based ConversationalAgent
 def get_ai_response(user_message, alert_data, conversation_history):
-    """Get conversational AI response about the alert"""
+    """
+    Get conversational AI response through the Supervisor-controlled workflow.
+    The Supervisor routes to the Conversational Agent based on mode.
+    """
     try:
-        from config import OPENAI_MODEL
-        llm = ChatOpenAI(
-            model=OPENAI_MODEL,  # Uses gpt-4o-mini from config
-            temperature=0.7,
-            api_key=OPENAI_API_KEY
+        # Initialize workflow if needed
+        if st.session_state.workflow_app is None:
+            st.session_state.workflow_app = create_aars_workflow()
+        
+        # Run conversation through the workflow (Supervisor → Conversational Agent)
+        response = run_conversation(
+            app=st.session_state.workflow_app,
+            alert_data=alert_data,
+            user_query=user_message,
+            conversation_history=conversation_history,
+            thread_id=alert_data['alert_id']
         )
-        
-        # Build context from alert data
-        customer_info = MOCK_CUSTOMER_DB.get(alert_data['subject_id'], {})
-        
-        context = f"""You are an AI assistant helping a financial crimes analyst investigate AML (Anti-Money Laundering) alerts.
-
-Current Alert Details:
-- Alert ID: {alert_data['alert_id']}
-- Scenario: {alert_data['scenario_name']} ({alert_data['scenario_code']})
-- Customer ID: {alert_data['subject_id']}
-- Trigger Details: {alert_data.get('trigger_details', 'N/A')}
-
-Customer Information:
-- Name: {customer_info.get('name', 'Unknown')}
-- Occupation: {customer_info.get('occupation', 'Unknown')}
-- Declared Income: ${customer_info.get('declared_income', 0):,}
-- Account Open Date: {customer_info.get('account_open_date', 'Unknown')}
-- Risk Rating: {customer_info.get('risk_rating', 'Unknown')}
-- KYC Verified: {customer_info.get('kyc_verified', False)}
-- Employer: {customer_info.get('employer', 'Unknown')}
-
-Your role:
-1. Answer questions about this alert in a conversational, ChatGPT-like manner
-2. Provide insights about the customer, transaction patterns, and risk factors
-3. Explain AML concepts, regulations, and terminology when asked
-4. Analyze the alert and provide your expert opinion on potential risks
-5. Suggest investigation steps or next actions
-6. Be helpful, professional, thorough, and engaging
-7. If the user asks about resolving the alert, explain they can either:
-   - Ask you more questions to understand the alert better
-   - Click the "🚀 Solve This Alert" button to run a full automated AI investigation
-
-Remember: You're a knowledgeable AML expert having a conversation. Be friendly but professional."""
-
-        messages = [SystemMessage(content=context)]
-        
-        # Add conversation history
-        for msg in conversation_history:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
-        
-        # Add current user message
-        messages.append(HumanMessage(content=user_message))
-        
-        response = llm.invoke(messages)
-        return response.content
-        
+        return response
     except Exception as e:
         return f"I apologize, but I encountered an error: {str(e)}. Please try again or contact support."
 
@@ -600,6 +624,9 @@ if st.session_state.current_alert:
             "content": ai_response
         })
         
+        # Save conversations to persistent storage
+        save_conversations(st.session_state.alert_conversations)
+        
         st.rerun()
 
 else:
@@ -619,15 +646,23 @@ if st.session_state.processing:
             alert = st.session_state.current_alert
             alert_id = alert['alert_id']
             
+            # Fresh state for new investigation (not resuming from checkpoint)
             initial_state = {
                 "alert_data": alert,
                 "findings": [],
                 "resolution": {},
                 "next": "",
-                "messages": []
+                "messages": [],
+                "mode": "resolve",  # Resolution mode
+                "user_query": "",
+                "conversation_history": [],
+                "conversation_response": ""
             }
             
-            config = {"configurable": {"thread_id": alert_id}}
+            # Use timestamp-based thread_id for fresh investigation each time
+            import uuid
+            fresh_thread_id = f"{alert_id}-resolve-{uuid.uuid4().hex[:8]}"
+            config = {"configurable": {"thread_id": fresh_thread_id}}
             
             # Initialize workflow history for this alert
             workflow_history = []
@@ -799,6 +834,10 @@ if st.session_state.processing:
                                 "role": "assistant",
                                 "content": f"✅ Investigation complete! **Decision: {action}**\n\nThe full investigation timeline is shown below. Feel free to ask me any questions about the findings!"
                             })
+                            
+                            # Save to persistent storage
+                            save_conversations(st.session_state.alert_conversations)
+                            save_workflow_histories(st.session_state.alert_workflow_histories)
             
             st.session_state.processing = False
             st.session_state.solving_alert = None
