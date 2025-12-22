@@ -1,8 +1,7 @@
 """All AARS agents"""
 
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage
 from state import AgentState
 from tools import *
 from database.seed_data import MOCK_CUSTOMER_DB
@@ -468,32 +467,3 @@ Respond helpfully. Use tools if needed."""
             }
     
     return conversational_node
-
-
-def get_conversational_agent():
-    """Get standalone conversational agent for backward compatibility"""
-    from config import OPENAI_API_KEY, OPENAI_MODEL
-    
-    model = ChatOpenAI(model=OPENAI_MODEL, temperature=0.7, api_key=OPENAI_API_KEY)
-    node_func = create_conversational_agent(model)
-    
-    class ConversationalAgentWrapper:
-        def __init__(self, node_func):
-            self.node_func = node_func
-        
-        def chat(self, user_message: str, alert_data: dict, conversation_history: list = None) -> str:
-            state = {
-                "alert_data": alert_data,
-                "user_query": user_message,
-                "conversation_history": conversation_history or [],
-                "findings": [],
-                "resolution": {},
-                "next": "",
-                "messages": [],
-                "mode": "conversation",
-                "conversation_response": ""
-            }
-            result = self.node_func(state)
-            return result.get("conversation_response", "No response generated.")
-    
-    return ConversationalAgentWrapper(node_func)

@@ -117,8 +117,7 @@ Alert_Resolution_System/
 ├── tools.py               # Agent tools (DB queries, sanctions, KYC)
 ├── state.py               # AgentState definition
 ├── config.py              # Configuration settings
-├── scenarios.py           # Alert scenario definitions
-├── checkpoint_manager.py  # Checkpoint utilities
+├── checkpoint_manager.py  # Checkpoint utilities (CLI)
 ├── database/
 │   ├── __init__.py
 │   ├── models.py          # SQLAlchemy models
