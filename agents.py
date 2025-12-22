@@ -152,12 +152,21 @@ A-003 KYC Inconsistency:
 - IF occupation is Teacher/Student AND large wire to Precious Metals → ESCALATE_SAR
 
 A-004 Sanctions List Hit:
+- IF CONFIRMED sanctions match (terrorist, sanctioned entity, OFAC list) → BLOCK_ACCOUNT (IMMEDIATE!)
 - IF true entity ID match OR high-risk jurisdiction → ESCALATE_SAR
-- IF common name false positive → FalsePositive
+- IF common name false positive (low match score, different DOB/country) → FalsePositive
 
 A-005 Dormant Account Activation:
 - IF KYC risk Low AND RFI available → RFI
 - IF KYC risk High OR international withdrawal → ESCALATE_SAR
+
+CRITICAL - BLOCK_ACCOUNT RULES:
+- BLOCK_ACCOUNT is the most severe action - use ONLY when:
+  * Customer name is CONFIRMED match on OFAC/UN/EU sanctions list
+  * Customer is confirmed terrorist or terrorist-affiliated entity
+  * Counterparty is CONFIRMED on sanctions/terrorist watchlist
+  * Match confidence is HIGH (>90%) and identity verified
+- When BLOCK_ACCOUNT: Immediately freeze all account activity
 
 Instructions:
 1. Review ALL findings from Investigator and Context Gatherer
@@ -165,7 +174,7 @@ Instructions:
 3. Output ONLY a JSON resolution:
 
 {
-  "action": "ESCALATE_SAR" | "RFI" | "FalsePositive",
+  "action": "ESCALATE_SAR" | "RFI" | "FalsePositive" | "BLOCK_ACCOUNT",
   "rationale": "Detailed explanation",
   "confidence": 0.0-1.0,
   "sop_rule_applied": "A-00X rule"
@@ -245,6 +254,7 @@ YOUR ROLE:
 1. Analyze the current state of the investigation
 2. Decide which agent should work next
 3. Ensure thorough investigation before making decisions
+4. CRITICAL: If you detect CONFIRMED sanctions/terrorist match → Can bypass to immediate BLOCK
 
 ROUTING RULES:
 - If mode is "conversation" → Route to "conversational" (user wants to chat)
@@ -253,10 +263,17 @@ ROUTING RULES:
 - If both investigation and context done, but no decision → Route to "adjudicator"
 - If resolution exists → Route to "FINISH"
 
+EMERGENCY BLOCK RULE (CRITICAL):
+- If Context Gatherer finds CONFIRMED sanctions match (terrorist, OFAC, UN sanctions)
+- AND match confidence is HIGH (>90%)
+- You can route directly to "adjudicator" with recommendation to BLOCK_ACCOUNT
+- This is for confirmed terrorists, sanctioned entities, or their counterparties
+
 You must respond with ONLY a JSON object:
 {
     "next": "<agent_name or FINISH>",
-    "reasoning": "<brief explanation of your decision>"
+    "reasoning": "<brief explanation of your decision>",
+    "emergency_block": true/false (optional - set true if sanctions confirmed)
 }
 
 Valid values for "next": investigator, context_gatherer, adjudicator, conversational, FINISH
@@ -382,6 +399,14 @@ def create_aem_executor_node():
             print(f"\nAction Executed: SAR Preparer Module Activated. Case {alert_data['alert_id']} pre-populated and routed to Human Queue. Rationale: {resolution['rationale']}")
         elif action == "FalsePositive":
             print(f"\nAction Executed: Alert {alert_data['alert_id']} closed as False Positive. No further action required.")
+        elif action == "BLOCK_ACCOUNT":
+            print(f"\n🚫 CRITICAL ACTION: ACCOUNT BLOCKED!")
+            print(f"   ✓ Account {alert_data['subject_id']} IMMEDIATELY FROZEN")
+            print(f"   ✓ All transactions HALTED")
+            print(f"   ✓ Sanctions compliance team NOTIFIED")
+            print(f"   ✓ Regulatory report AUTO-FILED")
+            print(f"   ✓ Case escalated to LEGAL DEPARTMENT")
+            print(f"   Reason: {resolution['rationale']}")
         
         # Check if IVR is needed (for A-005 Dormant Account scenario)
         if alert_data.get('scenario_code') == 'A-005' and action == "RFI":
@@ -494,15 +519,26 @@ Respond helpfully to the user's query. Use your tools if needed to gather specif
             print(f"Query: {user_query[:50]}...")
             print(f"Response generated successfully")
             
+            # Return new messages to be ADDED to conversation_history via reducer
+            # This persists in the checkpoint automatically!
             return {
                 "conversation_response": response,
+                "conversation_history": [
+                    {"role": "user", "content": user_query},
+                    {"role": "assistant", "content": response}
+                ],  # These will be appended via operator.add reducer
                 "messages": [AIMessage(content="Conversational Agent responded")],
-                "next": "FINISH"  # End after responding
+                "next": "FINISH"
             }
         except Exception as e:
             print(f"❌ Conversational Agent error: {str(e)}")
+            error_response = f"I encountered an error: {str(e)}. Please try again."
             return {
-                "conversation_response": f"I encountered an error: {str(e)}. Please try again.",
+                "conversation_response": error_response,
+                "conversation_history": [
+                    {"role": "user", "content": user_query},
+                    {"role": "assistant", "content": error_response}
+                ],
                 "messages": [AIMessage(content="Conversational Agent error")],
                 "next": "FINISH"
             }

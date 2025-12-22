@@ -9,24 +9,8 @@ from workflow import create_aars_workflow, run_conversation
 from database.seed_data import TEST_ALERTS, MOCK_CUSTOMER_DB
 from config import SCENARIOS, OPENAI_API_KEY
 
-# Persistent conversation storage
-CONVERSATION_FILE = "checkpoints/conversations.json"
-
-def load_conversations():
-    """Load conversations from persistent storage"""
-    if os.path.exists(CONVERSATION_FILE):
-        try:
-            with open(CONVERSATION_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_conversations(conversations):
-    """Save conversations to persistent storage"""
-    os.makedirs(os.path.dirname(CONVERSATION_FILE), exist_ok=True)
-    with open(CONVERSATION_FILE, 'w') as f:
-        json.dump(conversations, f, indent=2)
+# Workflow histories persistence (for resolved alert timelines)
+# Note: Conversation history is now persisted via LangGraph checkpoint reducer
 
 def load_workflow_histories():
     """Load workflow histories from persistent storage"""
@@ -45,6 +29,23 @@ def save_workflow_histories(histories):
     os.makedirs(os.path.dirname(history_file), exist_ok=True)
     with open(history_file, 'w') as f:
         json.dump(histories, f, indent=2)
+
+def load_conversation_from_checkpoint(app, alert_id):
+    """
+    Load conversation history from LangGraph checkpoint.
+    The checkpoint persists conversation_history via the state reducer.
+    """
+    try:
+        conv_thread_id = f"{alert_id}-conv"
+        config = {"configurable": {"thread_id": conv_thread_id}}
+        
+        # Get the checkpoint state
+        state = app.get_state(config)
+        if state and state.values:
+            return state.values.get("conversation_history", [])
+    except Exception as e:
+        print(f"Could not load conversation from checkpoint: {e}")
+    return []
 
 # Page configuration
 st.set_page_config(
@@ -286,9 +287,9 @@ if 'current_alert' not in st.session_state:
 if 'processing' not in st.session_state:
     st.session_state.processing = False
 # Store conversation messages per alert (key = alert_id, value = list of messages)
-# Load from persistent storage on startup
+# Conversations are persisted via LangGraph checkpoint reducer
 if 'alert_conversations' not in st.session_state:
-    st.session_state.alert_conversations = load_conversations()
+    st.session_state.alert_conversations = {}
 # Store workflow history per alert (key = alert_id, value = workflow chat_history list)
 if 'alert_workflow_histories' not in st.session_state:
     st.session_state.alert_workflow_histories = load_workflow_histories()
@@ -401,9 +402,15 @@ with st.sidebar:
         st.session_state.alert_conversations = {}
         st.session_state.alert_workflow_histories = {}
         st.session_state.solving_alert = None
-        # Clear persistent storage
-        save_conversations({})
+        st.session_state.workflow_app = None  # Force workflow recreation
+        # Clear persistent storage (workflow histories + checkpoints)
         save_workflow_histories({})
+        import glob
+        for f in glob.glob("checkpoints/*.db*"):
+            try:
+                os.remove(f)
+            except:
+                pass
         st.rerun()
     
     if st.button("🗑️ Clear Chat", use_container_width=True):
@@ -413,9 +420,11 @@ with st.sidebar:
                 del st.session_state.alert_conversations[current_id]
             if current_id in st.session_state.alert_workflow_histories:
                 del st.session_state.alert_workflow_histories[current_id]
+                st.session_state.resolved_alerts.discard(current_id)
+                st.session_state.pending_alerts.add(current_id)
             st.session_state.solving_alert = None
-            # Save to persistent storage
-            save_conversations(st.session_state.alert_conversations)
+            st.session_state.workflow_app = None  # Force recreation to clear checkpoint
+            # Save workflow histories
             save_workflow_histories(st.session_state.alert_workflow_histories)
         st.rerun()
     
@@ -455,7 +464,8 @@ with st.sidebar:
                     action_icon = {
                         "ESCALATE_SAR": "🚨",
                         "RFI": "📧",
-                        "FalsePositive": "✅"
+                        "FalsePositive": "✅",
+                        "BLOCK_ACCOUNT": "🚫"
                     }.get(action, "📋")
                     
                     st.markdown(f"""
@@ -496,10 +506,12 @@ with st.sidebar:
                     st.markdown("---")
 
 # Helper function to get AI response - Uses workflow-based ConversationalAgent
-def get_ai_response(user_message, alert_data, conversation_history):
+def get_ai_response(user_message, alert_data):
     """
     Get conversational AI response through the Supervisor-controlled workflow.
     The Supervisor routes to the Conversational Agent based on mode.
+    
+    Conversation history is persisted in the checkpoint via state reducer.
     """
     try:
         # Initialize workflow if needed
@@ -507,13 +519,18 @@ def get_ai_response(user_message, alert_data, conversation_history):
             st.session_state.workflow_app = create_aars_workflow()
         
         # Run conversation through the workflow (Supervisor → Conversational Agent)
-        response = run_conversation(
+        # Conversation history is accumulated in checkpoint via reducer
+        response, conversation_history = run_conversation(
             app=st.session_state.workflow_app,
             alert_data=alert_data,
             user_query=user_message,
-            conversation_history=conversation_history,
             thread_id=alert_data['alert_id']
         )
+        
+        # Update session state with full history from checkpoint
+        alert_id = alert_data['alert_id']
+        st.session_state.alert_conversations[alert_id] = conversation_history
+        
         return response
     except Exception as e:
         return f"I apologize, but I encountered an error: {str(e)}. Please try again or contact support."
@@ -569,9 +586,17 @@ if st.session_state.current_alert:
     # Show conversation for this alert
     st.markdown('<h3 style="color: #1a1a1a !important;">💬 Conversation</h3>', unsafe_allow_html=True)
     
-    # Get conversation history for this alert
+    # Get conversation history for this alert - load from checkpoint if available
     if alert_id not in st.session_state.alert_conversations:
-        st.session_state.alert_conversations[alert_id] = []
+        # Try to load from LangGraph checkpoint (persisted via reducer)
+        if st.session_state.workflow_app is None:
+            st.session_state.workflow_app = create_aars_workflow()
+        
+        checkpoint_history = load_conversation_from_checkpoint(
+            st.session_state.workflow_app, 
+            alert_id
+        )
+        st.session_state.alert_conversations[alert_id] = checkpoint_history
     
     conversation = st.session_state.alert_conversations[alert_id]
     
@@ -608,24 +633,11 @@ if st.session_state.current_alert:
     user_input = st.chat_input("Ask me anything about this alert...", key=f"chat_input_{alert_id}")
     
     if user_input:
-        # Add user message to conversation
-        st.session_state.alert_conversations[alert_id].append({
-            "role": "user",
-            "content": user_input
-        })
-        
-        # Get AI response
+        # Get AI response - conversation history is managed by checkpoint reducer
         with st.spinner("🤔 Thinking..."):
-            ai_response = get_ai_response(user_input, alert, st.session_state.alert_conversations[alert_id])
-        
-        # Add AI response to conversation
-        st.session_state.alert_conversations[alert_id].append({
-            "role": "assistant",
-            "content": ai_response
-        })
-        
-        # Save conversations to persistent storage
-        save_conversations(st.session_state.alert_conversations)
+            ai_response = get_ai_response(user_input, alert)
+            # Note: get_ai_response updates st.session_state.alert_conversations 
+            # with full history from checkpoint
         
         st.rerun()
 
@@ -807,6 +819,19 @@ if st.session_state.processing:
 ✓ No further action required
 ✓ System updated, alert archived
 
+**Outcome:** Case closed, no compliance concern identified""",
+
+                                "BLOCK_ACCOUNT": f"""**🚫 ACCOUNT BLOCKED - SANCTIONS/TERRORIST MATCH**
+
+⛔ Account {alert.get('subject_id', 'Customer')} IMMEDIATELY FROZEN
+⛔ ALL transactions HALTED effective immediately
+⛔ Sanctions Compliance Team NOTIFIED
+⛔ Regulatory report AUTO-FILED (OFAC/FinCEN)
+⛔ Case escalated to LEGAL DEPARTMENT
+⛔ Law enforcement notification prepared
+
+**CRITICAL:** This is a confirmed sanctions/terrorist list match. Account is blocked pending legal review.
+
 **Outcome:** Case closed, no compliance concern identified"""
                             }
                             
@@ -835,8 +860,8 @@ if st.session_state.processing:
                                 "content": f"✅ Investigation complete! **Decision: {action}**\n\nThe full investigation timeline is shown below. Feel free to ask me any questions about the findings!"
                             })
                             
-                            # Save to persistent storage
-                            save_conversations(st.session_state.alert_conversations)
+                            # Save workflow histories to persistent storage
+                            # (Conversations are persisted via checkpoint reducer)
                             save_workflow_histories(st.session_state.alert_workflow_histories)
             
             st.session_state.processing = False

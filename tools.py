@@ -7,8 +7,42 @@ from database.models import Customer, Transaction
 
 # Fallback mock data for sanctions (not in DB yet)
 MOCK_SANCTIONS_LIST = {
-    "Mahmoud Al-Hassan": {"entity_id": "SANC-9001", "jurisdiction": "High-Risk", "match_type": "True Match"},
-    "Deepak": {"entity_id": None, "jurisdiction": "N/A", "match_type": "Common Name - False Positive"}
+    "Mahmoud Al-Hassan": {
+        "entity_id": "SANC-9001", 
+        "jurisdiction": "High-Risk", 
+        "match_type": "CONFIRMED TERRORIST - OFAC SDN LIST",
+        "list_source": "OFAC SDN",
+        "category": "TERRORISM",
+        "confidence": 0.98,
+        "action_required": "BLOCK_ACCOUNT"
+    },
+    "Deepak": {
+        "entity_id": None, 
+        "jurisdiction": "N/A", 
+        "match_type": "Common Name - False Positive",
+        "list_source": None,
+        "category": None,
+        "confidence": 0.15,
+        "action_required": None
+    },
+    "Omar Terrorist Inc": {
+        "entity_id": "SANC-9002",
+        "jurisdiction": "Syria",
+        "match_type": "CONFIRMED SANCTIONED ENTITY - UN SANCTIONS",
+        "list_source": "UN Security Council",
+        "category": "TERRORIST FINANCING",
+        "confidence": 0.99,
+        "action_required": "BLOCK_ACCOUNT"
+    },
+    "Viktor Petrov": {
+        "entity_id": "SANC-9003",
+        "jurisdiction": "Russia",
+        "match_type": "CONFIRMED - EU/US SANCTIONS",
+        "list_source": "OFAC/EU Consolidated List",
+        "category": "SANCTIONED OLIGARCH",
+        "confidence": 0.95,
+        "action_required": "BLOCK_ACCOUNT"
+    }
 }
 
 MOCK_ADVERSE_MEDIA = {
@@ -143,17 +177,29 @@ def search_adverse_media(customer_id: str) -> str:
 
 @tool
 def sanctions_lookup(counterparty_name: str) -> str:
-    """Look up counterparty in sanctions watchlist (using mock data)."""
+    """Look up counterparty in sanctions watchlist (OFAC, UN, EU lists)."""
     print(f"\n🚨 [Context Tool] Sanctions lookup for '{counterparty_name}'")
     
     result = MOCK_SANCTIONS_LIST.get(counterparty_name, {
         "entity_id": None,
         "jurisdiction": "N/A",
-        "match_type": "No Match"
+        "match_type": "No Match",
+        "list_source": None,
+        "category": None,
+        "confidence": 0.0,
+        "action_required": None
     })
     
     result["counterparty_name"] = counterparty_name
-    result["fuzzy_match_score"] = 0.80 if counterparty_name in MOCK_SANCTIONS_LIST else 0.0
     
-    print(f"   ✓ Match type: {result['match_type']}")
+    # Check if this is a confirmed sanctions/terrorist match
+    is_confirmed = result.get("action_required") == "BLOCK_ACCOUNT"
+    
+    if is_confirmed:
+        print(f"   ⛔ CONFIRMED MATCH: {result['match_type']}")
+        print(f"   ⛔ List: {result['list_source']}, Category: {result['category']}")
+        print(f"   ⛔ RECOMMENDED ACTION: BLOCK_ACCOUNT")
+    else:
+        print(f"   ✓ Match type: {result['match_type']}")
+    
     return json.dumps(result, indent=2)

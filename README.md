@@ -31,13 +31,14 @@ An intelligent multi-agent AML (Anti-Money Laundering) investigation platform po
 | A-001 | Velocity Spike | 5+ transactions > $5k within 48 hours (Layering) |
 | A-002 | Structuring | 3 cash deposits between $9k-$9.9k in 7 days |
 | A-003 | KYC Inconsistency | Transaction doesn't match customer profile |
-| A-004 | Sanctions Hit | Fuzzy name match to watchlist entity |
+| A-004 | Sanctions Hit | Confirmed terrorist/sanctioned entity → BLOCK_ACCOUNT |
 | A-005 | Dormant Reactivation | Dormant account with sudden large activity |
 
 ### 📊 Resolution Actions
 - **ESCALATE_SAR** - Escalate for Suspicious Activity Report filing
 - **RFI** - Request for Information from customer
 - **FalsePositive** - Close alert as false positive
+- **BLOCK_ACCOUNT** - ⛔ Immediate account freeze for confirmed sanctions/terrorist matches
 
 ---
 

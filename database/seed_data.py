@@ -122,11 +122,11 @@ TEST_ALERTS = [
     {
         "alert_id": "ALT-2024-004",
         "scenario_code": "A-004",
-        "scenario_name": "Sanctions List Hit (Minor Match)",
+        "scenario_name": "Sanctions List Hit (CONFIRMED TERRORIST)",
         "subject_id": "CUST-104",
-        "trigger_details": "Transaction counterparty 'Deepak' is 80% fuzzy match to sanctions watchlist entity.",
-        "counterparty_name": "Deepak",
-        "expected_action": "FalsePositive"
+        "trigger_details": "Transaction counterparty 'Mahmoud Al-Hassan' is CONFIRMED 98% match to OFAC SDN List - TERRORIST designation. Immediate action required.",
+        "counterparty_name": "Mahmoud Al-Hassan",
+        "expected_action": "BLOCK_ACCOUNT"
     },
     {
         "alert_id": "ALT-2024-005",

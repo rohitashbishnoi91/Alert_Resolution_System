@@ -20,5 +20,7 @@ SCENARIOS = {
 }
 
 # Resolution Actions
-ACTIONS = ["ESCALATE_SAR", "RFI", "FalsePositive"]
+ACTIONS = ["ESCALATE_SAR", "RFI", "FalsePositive", "BLOCK_ACCOUNT"]
+
+# BLOCK_ACCOUNT: Immediate account blocking for confirmed sanctions/terrorist matches
 
