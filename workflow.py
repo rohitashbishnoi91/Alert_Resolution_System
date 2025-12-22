@@ -14,12 +14,11 @@ from agents import (
 from config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE
 import os
 
-# Enable checkpoints for fault-tolerance (resume after agent failures)
 USE_CHECKPOINTS = os.getenv("USE_CHECKPOINTS", "true").lower() == "true"
 
 
 def create_aars_workflow():
-    """Build the complete LangGraph workflow with all agents under Supervisor control"""
+    """Build the complete LangGraph workflow"""
     
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY not set in environment")
@@ -30,24 +29,22 @@ def create_aars_workflow():
         api_key=OPENAI_API_KEY
     )
     
-    # All agents including conversational - all under Supervisor control
     members = ["investigator", "context_gatherer", "adjudicator", "conversational"]
     
     investigator = create_investigator_agent(model)
     context_gatherer = create_context_gatherer_agent(model)
     adjudicator = create_adjudicator_agent(model)
-    conversational = create_conversational_agent(model)  # NEW: Conversational agent
+    conversational = create_conversational_agent(model)
     supervisor = create_supervisor_node(model, members)
     aem_executor = create_aem_executor_node()
     
     workflow = StateGraph(AgentState)
     
-    # All nodes including conversational
     workflow.add_node("supervisor", supervisor)
     workflow.add_node("investigator", investigator)
     workflow.add_node("context_gatherer", context_gatherer)
     workflow.add_node("adjudicator", adjudicator)
-    workflow.add_node("conversational", conversational)  
+    workflow.add_node("conversational", conversational)
     workflow.add_node("aem_executor", aem_executor)
     
     def route_supervisor(state: AgentState) -> str:
@@ -59,7 +56,6 @@ def create_aars_workflow():
     
     workflow.set_entry_point("supervisor")
     
-    # Supervisor can route to any agent including conversational
     workflow.add_conditional_edges(
         "supervisor",
         route_supervisor,
@@ -67,7 +63,7 @@ def create_aars_workflow():
             "investigator": "investigator",
             "context_gatherer": "context_gatherer",
             "adjudicator": "adjudicator",
-            "conversational": "conversational",  
+            "conversational": "conversational",
             END: END
         }
     )
@@ -75,10 +71,9 @@ def create_aars_workflow():
     workflow.add_conditional_edges("investigator", route_to_supervisor_or_aem, {"supervisor": "supervisor"})
     workflow.add_conditional_edges("context_gatherer", route_to_supervisor_or_aem, {"supervisor": "supervisor"})
     workflow.add_conditional_edges("adjudicator", route_to_supervisor_or_aem, {"aem_executor": "aem_executor", "supervisor": "supervisor"})
-    workflow.add_edge("conversational", END) 
+    workflow.add_edge("conversational", END)
     workflow.add_edge("aem_executor", END)
     
-    # Checkpointing for fault-tolerance and recovery
     if USE_CHECKPOINTS:
         from langgraph.checkpoint.sqlite import SqliteSaver
         import sqlite3
@@ -91,7 +86,6 @@ def create_aars_workflow():
         app = workflow.compile(checkpointer=memory)
         print("✓ Checkpointing ENABLED - Can resume after failures")
     else:
-        # No checkpointing - faster but cannot recover from failures
         app = workflow.compile()
         print("⚠️  Checkpointing DISABLED - Cannot resume after failures")
     
@@ -99,7 +93,7 @@ def create_aars_workflow():
 
 
 def run_alert_resolution(app, alert_data, thread_id=None):
-    """Run a single alert through the AARS workflow (resolve mode)"""
+    """Run alert through AARS workflow (resolve mode)"""
     
     print("\n" + "█"*80)
     print(f"█  AARS WORKFLOW STARTED")
@@ -112,7 +106,7 @@ def run_alert_resolution(app, alert_data, thread_id=None):
         "resolution": {},
         "next": "",
         "messages": [],
-        "mode": "resolve",  
+        "mode": "resolve",
         "user_query": "",
         "conversation_history": [],
         "conversation_response": ""
@@ -140,55 +134,35 @@ def run_alert_resolution(app, alert_data, thread_id=None):
 
 
 def run_conversation(app, alert_data, user_query, thread_id=None):
-    """
-    Run a conversation query through the AARS workflow.
-    The Supervisor routes to the Conversational Agent.
+    """Run conversation through AARS workflow (Supervisor → Conversational Agent)"""
     
-    Uses CONSISTENT thread_id per alert so conversation_history 
-    accumulates in the checkpoint via the state reducer.
-    
-    Args:
-        app: The compiled workflow
-        alert_data: Current alert being discussed
-        user_query: User's question
-        thread_id: Thread ID for checkpointing (consistent per alert)
-    
-    Returns:
-        tuple: (AI response string, full conversation history from checkpoint)
-    """
     print("\n" + "█"*80)
     print(f"█  AARS CONVERSATION MODE")
     print(f"█  Alert: {alert_data['alert_id']} | Query: {user_query[:50]}...")
     print("█"*80)
     
-    # Use CONSISTENT thread_id per alert - conversation_history accumulates via reducer
     conv_thread_id = f"{thread_id or alert_data['alert_id']}-conv"
     
-    # Initial state - conversation_history will be MERGED with existing via reducer
     initial_state = {
         "alert_data": alert_data,
         "findings": [],
         "resolution": {},
         "next": "",
         "messages": [],
-        "mode": "conversation", 
+        "mode": "conversation",
         "user_query": user_query,
-        "conversation_history": [],  # Empty - reducer will add new messages to existing
+        "conversation_history": [],
         "conversation_response": ""
     }
     
     config = {"configurable": {"thread_id": conv_thread_id}}
     
-    # Run the workflow
     response = ""
     for state in app.stream(initial_state, config):
-        # Extract response from the conversational node output
         for key, value in state.items():
             if isinstance(value, dict) and value.get("conversation_response"):
                 response = value["conversation_response"]
     
-    # Get the FULL accumulated state from checkpoint (not just node output)
-    # This contains the complete conversation_history accumulated via reducer
     checkpoint_state = app.get_state(config)
     conversation_history = []
     
@@ -199,4 +173,3 @@ def run_conversation(app, alert_data, user_query, thread_id=None):
     print("█"*80 + "\n")
     
     return response or "I couldn't generate a response. Please try again.", conversation_history
-

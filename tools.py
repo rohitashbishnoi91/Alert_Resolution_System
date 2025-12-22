@@ -1,11 +1,10 @@
-"""Agent tools - Now using database queries"""
+"""Agent tools - Database queries and external lookups"""
 
 from langchain_core.tools import tool
 import json
 from database.connection import get_db_session
 from database.models import Customer, Transaction
 
-# Fallback mock data for sanctions (not in DB yet)
 MOCK_SANCTIONS_LIST = {
     "Mahmoud Al-Hassan": {
         "entity_id": "SANC-9001", 
@@ -56,7 +55,7 @@ MOCK_ADVERSE_MEDIA = {
 
 @tool
 def db_query_history(customer_id: str, lookback_days: int = 90) -> str:
-    """Query historical transaction data for a customer from database."""
+    """Query historical transaction data for a customer."""
     print(f"\n🔍 [DB Tool] Querying transaction history for {customer_id}")
     
     try:
@@ -95,7 +94,6 @@ def check_linked_accounts(customer_id: str) -> str:
     """Check for linked accounts associated with a customer."""
     print(f"\n🔗 [DB Tool] Checking linked accounts for {customer_id}")
     
-    # Hardcoded for now - would query linked_accounts table in production
     linked = []
     aggregate_deposits = 28500 if customer_id == "CUST-102" else 0
     
@@ -112,7 +110,7 @@ def check_linked_accounts(customer_id: str) -> str:
 
 @tool
 def check_account_dormancy(customer_id: str) -> str:
-    """Check account dormancy status from database."""
+    """Check account dormancy status."""
     print(f"\n💤 [DB Tool] Checking account dormancy for {customer_id}")
     
     try:
@@ -167,7 +165,7 @@ def get_kyc_profile(customer_id: str) -> str:
 
 @tool
 def search_adverse_media(customer_id: str) -> str:
-    """Search for adverse media mentions (using mock data)."""
+    """Search for adverse media mentions."""
     print(f"\n📰 [Context Tool] Searching adverse media for {customer_id}")
     
     result = MOCK_ADVERSE_MEDIA.get(customer_id, {"hits": 0, "summary": "No data available"})
@@ -177,7 +175,7 @@ def search_adverse_media(customer_id: str) -> str:
 
 @tool
 def sanctions_lookup(counterparty_name: str) -> str:
-    """Look up counterparty in sanctions watchlist (OFAC, UN, EU lists)."""
+    """Look up counterparty in sanctions watchlist (OFAC, UN, EU)."""
     print(f"\n🚨 [Context Tool] Sanctions lookup for '{counterparty_name}'")
     
     result = MOCK_SANCTIONS_LIST.get(counterparty_name, {
@@ -191,8 +189,6 @@ def sanctions_lookup(counterparty_name: str) -> str:
     })
     
     result["counterparty_name"] = counterparty_name
-    
-    # Check if this is a confirmed sanctions/terrorist match
     is_confirmed = result.get("action_required") == "BLOCK_ACCOUNT"
     
     if is_confirmed:

@@ -1,19 +1,17 @@
 """Agent state definition"""
 
-from typing import TypedDict, Annotated, Optional
+from typing import TypedDict, Annotated
 import operator
 
 
 class AgentState(TypedDict):
-    """Shared state across all agents in the AARS workflow"""
+    """Shared state across all agents"""
     alert_data: dict
-    findings: Annotated[list, operator.add]  # Accumulates via reducer
+    findings: Annotated[list, operator.add]
     resolution: dict
     next: str
-    messages: Annotated[list, operator.add]  # Accumulates via reducer
-    # Conversation mode fields
-    mode: str  # "resolve" or "conversation"
-    user_query: str  # User's current question
-    conversation_history: Annotated[list, operator.add]  # Accumulates via reducer - persisted in checkpoint!
-    conversation_response: str  # Latest response from conversational agent
-
+    messages: Annotated[list, operator.add]
+    mode: str
+    user_query: str
+    conversation_history: Annotated[list, operator.add]
+    conversation_response: str

@@ -9,11 +9,8 @@ from workflow import create_aars_workflow, run_conversation
 from database.seed_data import TEST_ALERTS, MOCK_CUSTOMER_DB
 from config import SCENARIOS, OPENAI_API_KEY
 
-# Workflow histories persistence (for resolved alert timelines)
-# Note: Conversation history is now persisted via LangGraph checkpoint reducer
-
 def load_workflow_histories():
-    """Load workflow histories from persistent storage"""
+    """Load workflow histories from file"""
     history_file = "checkpoints/workflow_histories.json"
     if os.path.exists(history_file):
         try:
@@ -24,22 +21,17 @@ def load_workflow_histories():
     return {}
 
 def save_workflow_histories(histories):
-    """Save workflow histories to persistent storage"""
+    """Save workflow histories to file"""
     history_file = "checkpoints/workflow_histories.json"
     os.makedirs(os.path.dirname(history_file), exist_ok=True)
     with open(history_file, 'w') as f:
         json.dump(histories, f, indent=2)
 
 def load_conversation_from_checkpoint(app, alert_id):
-    """
-    Load conversation history from LangGraph checkpoint.
-    The checkpoint persists conversation_history via the state reducer.
-    """
+    """Load conversation history from LangGraph checkpoint"""
     try:
         conv_thread_id = f"{alert_id}-conv"
         config = {"configurable": {"thread_id": conv_thread_id}}
-        
-        # Get the checkpoint state
         state = app.get_state(config)
         if state and state.values:
             return state.values.get("conversation_history", [])
@@ -279,27 +271,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# Session State Initialization
 if 'workflow_app' not in st.session_state:
     st.session_state.workflow_app = None
 if 'current_alert' not in st.session_state:
     st.session_state.current_alert = None
 if 'processing' not in st.session_state:
     st.session_state.processing = False
-# Store conversation messages per alert (key = alert_id, value = list of messages)
-# Conversations are persisted via LangGraph checkpoint reducer
 if 'alert_conversations' not in st.session_state:
     st.session_state.alert_conversations = {}
-# Store workflow history per alert (key = alert_id, value = workflow chat_history list)
 if 'alert_workflow_histories' not in st.session_state:
     st.session_state.alert_workflow_histories = load_workflow_histories()
-# Track if user wants to solve the alert
 if 'solving_alert' not in st.session_state:
     st.session_state.solving_alert = None
-# Load resolved alerts from workflow histories (persisted)
 if 'resolved_alerts' not in st.session_state:
     st.session_state.resolved_alerts = set(st.session_state.alert_workflow_histories.keys())
-# Calculate pending alerts based on resolved
 if 'pending_alerts' not in st.session_state:
     all_alerts = {alert['alert_id'] for alert in TEST_ALERTS}
     st.session_state.pending_alerts = all_alerts - st.session_state.resolved_alerts
@@ -350,7 +336,6 @@ with st.sidebar:
         is_resolved = alert_id in st.session_state.resolved_alerts
         status_badge = "✅" if is_resolved else "⏳"
         
-        # Show message count badge
         msg_count = len(st.session_state.alert_conversations.get(alert_id, []))
         badge_text = f"{status_badge} {alert['scenario_code']}"
         if msg_count > 0:
@@ -361,7 +346,6 @@ with st.sidebar:
             key=f"alert_{alert_id}",
             use_container_width=True
         ):
-            # Switch to new alert
             st.session_state.current_alert = alert
             st.session_state.solving_alert = None
             st.rerun()
@@ -402,8 +386,7 @@ with st.sidebar:
         st.session_state.alert_conversations = {}
         st.session_state.alert_workflow_histories = {}
         st.session_state.solving_alert = None
-        st.session_state.workflow_app = None  # Force workflow recreation
-        # Clear persistent storage (workflow histories + checkpoints)
+        st.session_state.workflow_app = None
         save_workflow_histories({})
         import glob
         for f in glob.glob("checkpoints/*.db*"):
@@ -423,8 +406,7 @@ with st.sidebar:
                 st.session_state.resolved_alerts.discard(current_id)
                 st.session_state.pending_alerts.add(current_id)
             st.session_state.solving_alert = None
-            st.session_state.workflow_app = None  # Force recreation to clear checkpoint
-            # Save workflow histories
+            st.session_state.workflow_app = None
             save_workflow_histories(st.session_state.alert_workflow_histories)
         st.rerun()
     
@@ -432,20 +414,18 @@ with st.sidebar:
         import glob
         checkpoint_dir = "checkpoints"
         if os.path.exists(checkpoint_dir):
-            # Clear all checkpoint files including conversations
             for f in glob.glob(os.path.join(checkpoint_dir, "*")):
                 try:
                     os.remove(f)
                 except:
                     pass
-            st.session_state.workflow_app = None  # Force workflow recreation
+            st.session_state.workflow_app = None
             st.session_state.alert_conversations = {}
             st.session_state.alert_workflow_histories = {}
             st.session_state.resolved_alerts = set()
             st.success("✅ All checkpoints & conversations cleared!")
             st.rerun()
     
-    # Show Investigation Details in Sidebar (if alert is resolved)
     if st.session_state.current_alert:
         current_id = st.session_state.current_alert['alert_id']
         if current_id in st.session_state.alert_workflow_histories:
@@ -454,7 +434,6 @@ with st.sidebar:
             
             workflow_history = st.session_state.alert_workflow_histories[current_id]
             
-            # Show resolution summary at top
             for message in workflow_history:
                 if message["role"] == "resolution":
                     resolution_data = message.get("data", {})
@@ -477,7 +456,6 @@ with st.sidebar:
                     """, unsafe_allow_html=True)
                     break
             
-            # Expandable detailed timeline
             with st.expander("🔄 View Full Timeline", expanded=False):
                 for message in workflow_history:
                     role = message["role"]
@@ -505,21 +483,12 @@ with st.sidebar:
                     
                     st.markdown("---")
 
-# Helper function to get AI response - Uses workflow-based ConversationalAgent
 def get_ai_response(user_message, alert_data):
-    """
-    Get conversational AI response through the Supervisor-controlled workflow.
-    The Supervisor routes to the Conversational Agent based on mode.
-    
-    Conversation history is persisted in the checkpoint via state reducer.
-    """
+    """Get conversational AI response through Supervisor workflow"""
     try:
-        # Initialize workflow if needed
         if st.session_state.workflow_app is None:
             st.session_state.workflow_app = create_aars_workflow()
         
-        # Run conversation through the workflow (Supervisor → Conversational Agent)
-        # Conversation history is accumulated in checkpoint via reducer
         response, conversation_history = run_conversation(
             app=st.session_state.workflow_app,
             alert_data=alert_data,
@@ -527,7 +496,6 @@ def get_ai_response(user_message, alert_data):
             thread_id=alert_data['alert_id']
         )
         
-        # Update session state with full history from checkpoint
         alert_id = alert_data['alert_id']
         st.session_state.alert_conversations[alert_id] = conversation_history
         
@@ -586,9 +554,7 @@ if st.session_state.current_alert:
     # Show conversation for this alert
     st.markdown('<h3 style="color: #1a1a1a !important;">💬 Conversation</h3>', unsafe_allow_html=True)
     
-    # Get conversation history for this alert - load from checkpoint if available
     if alert_id not in st.session_state.alert_conversations:
-        # Try to load from LangGraph checkpoint (persisted via reducer)
         if st.session_state.workflow_app is None:
             st.session_state.workflow_app = create_aars_workflow()
         
@@ -633,12 +599,8 @@ if st.session_state.current_alert:
     user_input = st.chat_input("Ask me anything about this alert...", key=f"chat_input_{alert_id}")
     
     if user_input:
-        # Get AI response - conversation history is managed by checkpoint reducer
         with st.spinner("🤔 Thinking..."):
             ai_response = get_ai_response(user_input, alert)
-            # Note: get_ai_response updates st.session_state.alert_conversations 
-            # with full history from checkpoint
-        
         st.rerun()
 
 else:
@@ -651,43 +613,37 @@ st.markdown("---")
 if st.session_state.processing:
     with st.spinner("🤖 AI Agents are investigating..."):
         try:
-            # Initialize workflow
             if st.session_state.workflow_app is None:
                 st.session_state.workflow_app = create_aars_workflow()
             
             alert = st.session_state.current_alert
             alert_id = alert['alert_id']
             
-            # Fresh state for new investigation (not resuming from checkpoint)
             initial_state = {
                 "alert_data": alert,
                 "findings": [],
                 "resolution": {},
                 "next": "",
                 "messages": [],
-                "mode": "resolve",  # Resolution mode
+                "mode": "resolve",
                 "user_query": "",
                 "conversation_history": [],
                 "conversation_response": ""
             }
             
-            # Use timestamp-based thread_id for fresh investigation each time
             import uuid
             fresh_thread_id = f"{alert_id}-resolve-{uuid.uuid4().hex[:8]}"
             config = {"configurable": {"thread_id": fresh_thread_id}}
             
-            # Initialize workflow history for this alert
             workflow_history = []
             
-            # Add message to conversation
             st.session_state.alert_conversations[alert_id].append({
                 "role": "assistant",
                 "content": "🚀 Starting automated AI investigation workflow. I'll coordinate multiple agents to analyze this alert..."
             })
             
-            # Process workflow with error handling
             resolution = None
-            max_iterations = 50  # Prevent infinite retry loops
+            max_iterations = 50
             iteration = 0
             
             for state in st.session_state.workflow_app.stream(initial_state, config):
@@ -697,7 +653,6 @@ if st.session_state.processing:
                     break
                 
                 for node_name, node_state in state.items():
-                    # Check for errors in findings
                     findings = node_state.get("findings", [])
                     has_error = any("ERROR:" in f for f in findings)
                     
@@ -715,11 +670,9 @@ if st.session_state.processing:
                                 "content": "⚠️ Investigator encountered an error. Retrying with checkpoint..."
                             })
                         else:
-                            # Extract detailed findings
                             findings_detail = node_state.get("findings", [])
                             findings_text = "\n".join([f.replace("[Investigator] ", "") for f in findings_detail if "Investigator" in f])
                             
-                            # Show tools used
                             workflow_history.append({
                                 "role": "investigator",
                                 "content": f"""**Database Investigation Complete**
@@ -742,7 +695,6 @@ if st.session_state.processing:
                                 "content": "⚠️ Context Gatherer encountered an error. Retrying with checkpoint..."
                             })
                         else:
-                            # Extract detailed findings
                             findings_detail = node_state.get("findings", [])
                             findings_text = "\n".join([f.replace("[Context Gatherer] ", "") for f in findings_detail if "Context Gatherer" in f])
                             
@@ -792,7 +744,6 @@ if st.session_state.processing:
                         if resolution:
                             action = resolution['action']
                             
-                            # Detailed action execution message
                             action_details = {
                                 "ESCALATE_SAR": f"""**🚨 SAR ESCALATION EXECUTED**
 
@@ -846,22 +797,17 @@ if st.session_state.processing:
                                 "data": resolution
                             })
                             
-                            # Mark as resolved
                             st.session_state.resolved_alerts.add(alert_id)
                             if alert_id in st.session_state.pending_alerts:
                                 st.session_state.pending_alerts.remove(alert_id)
                             
-                            # Save the complete workflow history for this alert
                             st.session_state.alert_workflow_histories[alert_id] = workflow_history
                             
-                            # Add completion message to conversation
                             st.session_state.alert_conversations[alert_id].append({
                                 "role": "assistant",
                                 "content": f"✅ Investigation complete! **Decision: {action}**\n\nThe full investigation timeline is shown below. Feel free to ask me any questions about the findings!"
                             })
                             
-                            # Save workflow histories to persistent storage
-                            # (Conversations are persisted via checkpoint reducer)
                             save_workflow_histories(st.session_state.alert_workflow_histories)
             
             st.session_state.processing = False
