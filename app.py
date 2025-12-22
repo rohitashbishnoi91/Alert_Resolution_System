@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 import json
 import os
-from workflow import create_aars_workflow, run_conversation
+from workflow import create_aars_workflow, run_conversation, run_alert_resolution
 from database.seed_data import TEST_ALERTS, MOCK_CUSTOMER_DB
 from config import SCENARIOS, OPENAI_API_KEY
 
@@ -619,63 +619,35 @@ if st.session_state.processing:
             alert = st.session_state.current_alert
             alert_id = alert['alert_id']
             
-            initial_state = {
-                "alert_data": alert,
-                "findings": [],
-                "resolution": {},
-                "next": "",
-                "messages": [],
-                "mode": "resolve",
-                "user_query": "",
-                "conversation_history": [],
-                "conversation_response": ""
-            }
-            
-            import uuid
-            fresh_thread_id = f"{alert_id}-resolve-{uuid.uuid4().hex[:8]}"
-            config = {"configurable": {"thread_id": fresh_thread_id}}
-            
             workflow_history = []
+            resolution = None
             
             st.session_state.alert_conversations[alert_id].append({
                 "role": "assistant",
                 "content": "🚀 Starting automated AI investigation workflow. I'll coordinate multiple agents to analyze this alert..."
             })
             
-            resolution = None
-            max_iterations = 50
-            iteration = 0
-            
-            for state in st.session_state.workflow_app.stream(initial_state, config):
-                iteration += 1
-                if iteration > max_iterations:
+            for result in run_alert_resolution(st.session_state.workflow_app, alert):
+                node = result["node"]
+                
+                if node == "error":
                     st.error("⚠️ Max iterations reached. Workflow may be stuck in retry loop.")
                     break
                 
-                for node_name, node_state in state.items():
-                    findings = node_state.get("findings", [])
-                    has_error = any("ERROR:" in f for f in findings)
-                    
-                    if node_name == "supervisor":
-                        next_agent = node_state.get("next", "")
+                if node == "supervisor":
+                    workflow_history.append({
+                        "role": "supervisor",
+                        "content": f"Routing to: **{result['next'].upper()}**"
+                    })
+                
+                elif node == "investigator":
+                    if result["has_error"]:
+                        workflow_history.append({"role": "system", "content": "⚠️ Investigator error. Retrying..."})
+                    else:
+                        findings_text = "\n".join([f.replace("[Investigator] ", "") for f in result["findings"] if "Investigator" in f])
                         workflow_history.append({
-                            "role": "supervisor",
-                            "content": f"Routing to: **{next_agent.upper()}**"
-                        })
-                    
-                    elif node_name == "investigator":
-                        if has_error:
-                            workflow_history.append({
-                                "role": "system",
-                                "content": "⚠️ Investigator encountered an error. Retrying with checkpoint..."
-                            })
-                        else:
-                            findings_detail = node_state.get("findings", [])
-                            findings_text = "\n".join([f.replace("[Investigator] ", "") for f in findings_detail if "Investigator" in f])
-                            
-                            workflow_history.append({
-                                "role": "investigator",
-                                "content": f"""**Database Investigation Complete**
+                            "role": "investigator",
+                            "content": f"""**Database Investigation Complete**
 
 **Tools Used:**
 - 🔍 db_query_history - Retrieved 90-day transaction history
@@ -683,24 +655,19 @@ if st.session_state.processing:
 - 💤 check_account_dormancy - Analyzed account activity status
 
 **Findings:**
-{findings_text if findings_text else "Transaction patterns analyzed, historical data retrieved."}
+{findings_text or "Transaction patterns analyzed, historical data retrieved."}
 
-**Status:** ✅ Investigation successful, checkpoint saved"""
-                            })
-                    
-                    elif node_name == "context_gatherer":
-                        if has_error:
-                            workflow_history.append({
-                                "role": "system",
-                                "content": "⚠️ Context Gatherer encountered an error. Retrying with checkpoint..."
-                            })
-                        else:
-                            findings_detail = node_state.get("findings", [])
-                            findings_text = "\n".join([f.replace("[Context Gatherer] ", "") for f in findings_detail if "Context Gatherer" in f])
-                            
-                            workflow_history.append({
-                                "role": "context_gatherer",
-                                "content": f"""**Context Gathering Complete**
+**Status:** ✅ Investigation successful"""
+                        })
+                
+                elif node == "context_gatherer":
+                    if result["has_error"]:
+                        workflow_history.append({"role": "system", "content": "⚠️ Context Gatherer error. Retrying..."})
+                    else:
+                        findings_text = "\n".join([f.replace("[Context Gatherer] ", "") for f in result["findings"] if "Context Gatherer" in f])
+                        workflow_history.append({
+                            "role": "context_gatherer",
+                            "content": f"""**Context Gathering Complete**
 
 **Tools Used:**
 - 👤 get_kyc_profile - Retrieved customer KYC data
@@ -708,107 +675,54 @@ if st.session_state.processing:
 - 🚨 sanctions_lookup - Verified watchlist status
 
 **Findings:**
-{findings_text if findings_text else "KYC profile verified, no adverse media hits, sanctions check complete."}
+{findings_text or "KYC profile verified, sanctions check complete."}
 
-**Status:** ✅ Context gathered, checkpoint saved"""
-                            })
-                    
-                    elif node_name == "adjudicator":
-                        if has_error:
-                            workflow_history.append({
-                                "role": "system",
-                                "content": "⚠️ Adjudicator encountered an error. Retrying with checkpoint..."
-                            })
-                        elif node_state.get("resolution"):
-                            resolution = node_state["resolution"]
-                            sop_rule = resolution.get("sop_rule_applied", alert['scenario_code'])
-                            
-                            workflow_history.append({
-                                "role": "adjudicator",
-                                "content": f"""**Decision Rendered**
+**Status:** ✅ Context gathered"""
+                        })
+                
+                elif node == "adjudicator":
+                    if result["has_error"]:
+                        workflow_history.append({"role": "system", "content": "⚠️ Adjudicator error. Retrying..."})
+                    elif result["resolution"]:
+                        resolution = result["resolution"]
+                        workflow_history.append({
+                            "role": "adjudicator",
+                            "content": f"""**Decision Rendered**
 
-**SOP Applied:** {sop_rule}
+**SOP Applied:** {resolution.get('sop_rule_applied', alert['scenario_code'])}
 **Decision:** {resolution['action']}
 **Confidence Level:** {resolution['confidence']:.1%}
 
-**Reasoning Process:**
-1. Reviewed Investigator findings (transaction patterns, history)
-2. Analyzed Context Gatherer data (KYC, media, sanctions)
-3. Applied {alert['scenario_code']} SOP rules
-4. Determined appropriate action based on evidence
-
-**Status:** ✅ Decision made, checkpoint saved"""
-                            })
+**Status:** ✅ Decision made"""
+                        })
+                
+                elif node == "aem_executor" and resolution:
+                    action = resolution['action']
+                    action_messages = {
+                        "ESCALATE_SAR": f"**🚨 SAR ESCALATION** - Case {alert['alert_id']} routed to Compliance Queue",
+                        "RFI": f"**📧 RFI SENT** - Email drafted to {alert.get('subject_id', 'Customer')}",
+                        "FalsePositive": f"**✅ CLOSED** - Alert {alert['alert_id']} marked as False Positive",
+                        "BLOCK_ACCOUNT": f"**🚫 ACCOUNT BLOCKED** - {alert.get('subject_id')} FROZEN, Legal notified"
+                    }
                     
-                    elif node_name == "aem_executor":
-                        if resolution:
-                            action = resolution['action']
-                            
-                            action_details = {
-                                "ESCALATE_SAR": f"""**🚨 SAR ESCALATION EXECUTED**
-
-✓ Case {alert['alert_id']} pre-populated in SAR system
-✓ Routed to Compliance Review Queue
-✓ All findings and evidence attached
-✓ Awaiting human review and filing decision
-
-**Next Steps:** Human analyst will review for SAR filing""",
-                                
-                                "RFI": f"""**📧 RFI REQUEST EXECUTED**
-
-✓ Email drafted to customer {alert.get('subject_id', 'Customer')}
-✓ Requesting source of funds documentation
-✓ 10-day response window initiated
-✓ Follow-up scheduled in CRM system
-
-**Next Steps:** Await customer response, escalate if no reply""",
-                                
-                                "FalsePositive": f"""**✅ ALERT CLOSED - FALSE POSITIVE**
-
-✓ Alert {alert['alert_id']} marked as resolved
-✓ Transaction pattern determined legitimate
-✓ No further action required
-✓ System updated, alert archived
-
-**Outcome:** Case closed, no compliance concern identified""",
-
-                                "BLOCK_ACCOUNT": f"""**🚫 ACCOUNT BLOCKED - SANCTIONS/TERRORIST MATCH**
-
-⛔ Account {alert.get('subject_id', 'Customer')} IMMEDIATELY FROZEN
-⛔ ALL transactions HALTED effective immediately
-⛔ Sanctions Compliance Team NOTIFIED
-⛔ Regulatory report AUTO-FILED (OFAC/FinCEN)
-⛔ Case escalated to LEGAL DEPARTMENT
-⛔ Law enforcement notification prepared
-
-**CRITICAL:** This is a confirmed sanctions/terrorist list match. Account is blocked pending legal review.
-
-**Outcome:** Case closed, no compliance concern identified"""
-                            }
-                            
-                            workflow_history.append({
-                                "role": "aem_executor",
-                                "content": action_details.get(action, f"Action executed: {action}")
-                            })
-                            
-                            workflow_history.append({
-                                "role": "resolution",
-                                "content": f"Alert {alert['alert_id']} processed",
-                                "data": resolution
-                            })
-                            
-                            st.session_state.resolved_alerts.add(alert_id)
-                            if alert_id in st.session_state.pending_alerts:
-                                st.session_state.pending_alerts.remove(alert_id)
-                            
-                            st.session_state.alert_workflow_histories[alert_id] = workflow_history
-                            
-                            st.session_state.alert_conversations[alert_id].append({
-                                "role": "assistant",
-                                "content": f"✅ Investigation complete! **Decision: {action}**\n\nThe full investigation timeline is shown below. Feel free to ask me any questions about the findings!"
-                            })
-                            
-                            save_workflow_histories(st.session_state.alert_workflow_histories)
+                    workflow_history.append({
+                        "role": "aem_executor",
+                        "content": action_messages.get(action, f"Action executed: {action}")
+                    })
+                    workflow_history.append({
+                        "role": "resolution",
+                        "content": f"Alert {alert['alert_id']} processed",
+                        "data": resolution
+                    })
+                    
+                    st.session_state.resolved_alerts.add(alert_id)
+                    st.session_state.pending_alerts.discard(alert_id)
+                    st.session_state.alert_workflow_histories[alert_id] = workflow_history
+                    st.session_state.alert_conversations[alert_id].append({
+                        "role": "assistant",
+                        "content": f"✅ Investigation complete! **Decision: {action}**\n\nSee investigation details in the sidebar."
+                    })
+                    save_workflow_histories(st.session_state.alert_workflow_histories)
             
             st.session_state.processing = False
             st.session_state.solving_alert = None
@@ -816,7 +730,7 @@ if st.session_state.processing:
             
         except Exception as e:
             st.error(f"❌ Workflow failed: {str(e)}")
-            st.info("💾 Progress saved to checkpoint. You can retry by clicking 'Solve This Alert' again.")
+            st.info("💾 Progress saved to checkpoint. You can retry.")
             st.session_state.processing = False
             st.session_state.solving_alert = None
             st.rerun()

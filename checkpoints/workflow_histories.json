@@ -1,12 +1,12 @@
 {
-  "ALT-2024-001": [
+  "ALT-2024-002": [
     {
       "role": "supervisor",
       "content": "Routing to: **INVESTIGATOR**"
     },
     {
       "role": "investigator",
-      "content": "**Database Investigation Complete**\n\n**Tools Used:**\n- \ud83d\udd0d db_query_history - Retrieved 90-day transaction history\n- \ud83d\udd17 check_linked_accounts - Verified account relationships  \n- \ud83d\udca4 check_account_dormancy - Analyzed account activity status\n\n**Findings:**\nINVESTIGATOR FINDINGS:\n- Customer CUST-101 has a total of 4 transactions in the last 90 days, with the highest transaction amount being $1,500 and an average transaction amount of $1,100.\n- There are no linked accounts associated with CUST-101, indicating no additional accounts that could be related to the transactions.\n- The account is not dormant; the last activity was on November 20, 2024, with recent transactions including a $1,200 debit for rent and an $800 debit for utilities.\n- The alert indicates 5 transactions exceeding $5,000 within 48 hours, totaling $42,800, which does not match the historical transaction data for CUST-101, suggesting that the reported transactions may not be from this customer or there may be an error in the alert details.\n\n**Status:** \u2705 Investigation successful, checkpoint saved"
+      "content": "**Database Investigation Complete**\n\n**Tools Used:**\n- \ud83d\udd0d db_query_history - Retrieved 90-day transaction history\n- \ud83d\udd17 check_linked_accounts - Verified account relationships  \n- \ud83d\udca4 check_account_dormancy - Analyzed account activity status\n\n**Findings:**\nINVESTIGATOR FINDINGS:\n- Customer CUST-102 made three cash deposits within 7 days totaling $28,500: $9,200 on September 10, $9,500 on September 12, and $9,800 on September 15.\n- The customer's historical maximum transaction amount is $15,000, with an average transaction amount of $10,875 over the last 90 days.\n- There have been 4 high-value transactions (above $10,000) in the last 90 days.\n- There are no linked accounts associated with customer CUST-102.\n- The account is not dormant; the last activity was a debit transaction of $15,000 on October 1, 2024.\n\n**Status:** \u2705 Investigation successful"
     },
     {
       "role": "supervisor",
@@ -14,7 +14,7 @@
     },
     {
       "role": "context_gatherer",
-      "content": "**Context Gathering Complete**\n\n**Tools Used:**\n- \ud83d\udc64 get_kyc_profile - Retrieved customer KYC data\n- \ud83d\udcf0 search_adverse_media - Searched OSINT sources\n- \ud83d\udea8 sanctions_lookup - Verified watchlist status\n\n**Findings:**\nCONTEXT GATHERER FINDINGS:\n- Customer Name: Rohitash\n- Occupation: Teacher\n- Declared Income: $50,000\n- Risk Rating: Low\n- No adverse media found for the customer.\n- Customer is not listed on any sanctions watchlist. \n\n### Transaction Analysis:\n- The customer has conducted 5 transactions exceeding $5,000 within 48 hours, totaling $42,800.\n- A large inbound credit of $48,000 was received just 2 hours prior to the first outbound transaction.\n\n### Compliance Considerations:\n- The transaction patterns indicate a potential layering scenario, given the rapid succession of large transactions following a significant inbound credit.\n- The customer's declared income and occupation may not align with the transaction volume, warranting further investigation into the source of funds for the inbound credit.\n\n**Status:** \u2705 Context gathered, checkpoint saved"
+      "content": "**Context Gathering Complete**\n\n**Tools Used:**\n- \ud83d\udc64 get_kyc_profile - Retrieved customer KYC data\n- \ud83d\udcf0 search_adverse_media - Searched OSINT sources\n- \ud83d\udea8 sanctions_lookup - Verified watchlist status\n\n**Findings:**\nCONTEXT GATHERER FINDINGS:\n- Customer Profile: Priya, a jeweler with a declared income of $120,000, has a medium risk rating. There is no specified source of funds, and she does not require enhanced due diligence.\n- Adverse Media: No negative news or adverse media mentions found for Priya.\n- Sanctions Check: Priya is not listed on any sanctions watchlist, indicating no compliance issues in this regard. \n\nTransaction Analysis:\n- The cash deposits totaling $28,500 over a short period may indicate structuring behavior, especially given the proximity of the amounts to the reporting threshold. Further investigation into the source of funds may be warranted.\n\n**Status:** \u2705 Context gathered"
     },
     {
       "role": "supervisor",
@@ -22,20 +22,20 @@
     },
     {
       "role": "adjudicator",
-      "content": "**Decision Rendered**\n\n**SOP Applied:** A-001 rule\n**Decision:** ESCALATE_SAR\n**Confidence Level:** 95.0%\n\n**Reasoning Process:**\n1. Reviewed Investigator findings (transaction patterns, history)\n2. Analyzed Context Gatherer data (KYC, media, sanctions)\n3. Applied A-001 SOP rules\n4. Determined appropriate action based on evidence\n\n**Status:** \u2705 Decision made, checkpoint saved"
+      "content": "**Decision Rendered**\n\n**SOP Applied:** A-002 rule\n**Decision:** ESCALATE_SAR\n**Confidence Level:** 85.0%\n\n**Status:** \u2705 Decision made"
     },
     {
       "role": "aem_executor",
-      "content": "**\ud83d\udea8 SAR ESCALATION EXECUTED**\n\n\u2713 Case ALT-2024-001 pre-populated in SAR system\n\u2713 Routed to Compliance Review Queue\n\u2713 All findings and evidence attached\n\u2713 Awaiting human review and filing decision\n\n**Next Steps:** Human analyst will review for SAR filing"
+      "content": "**\ud83d\udea8 SAR ESCALATION** - Case ALT-2024-002 routed to Compliance Queue"
     },
     {
       "role": "resolution",
-      "content": "Alert ALT-2024-001 processed",
+      "content": "Alert ALT-2024-002 processed",
       "data": {
         "action": "ESCALATE_SAR",
-        "rationale": "The customer has a significant velocity spike with 5 transactions exceeding $5,000 within 48 hours, totaling $42,800, which does not align with their historical transaction patterns. Additionally, there is an income mismatch as the declared income of $50,000 does not support such high transaction volumes, indicating potential layering activity.",
-        "confidence": 0.95,
-        "sop_rule_applied": "A-001 rule"
+        "rationale": "Customer CUST-102 made cash deposits totaling $28,500 within 7 days, exceeding the $28,000 threshold. Given the historical maximum transaction amount of $15,000 and the average transaction amount of $10,875, this behavior suggests potential structuring. Further investigation into the source of funds is warranted.",
+        "confidence": 0.85,
+        "sop_rule_applied": "A-002 rule"
       }
     }
   ]

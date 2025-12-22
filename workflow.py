@@ -90,6 +90,63 @@ def create_aars_workflow():
     return app
 
 
+def run_alert_resolution(app, alert_data, thread_id=None, max_iterations=50):
+    """
+    Run alert through AARS workflow (resolve mode).
+    Yields processed node outputs for real-time UI updates.
+    """
+    import uuid
+    
+    print("\n" + "█"*80)
+    print(f"█  AARS WORKFLOW STARTED")
+    print(f"█  Alert: {alert_data['alert_id']} | Scenario: {alert_data['scenario_code']}")
+    print("█"*80)
+    
+    fresh_thread_id = thread_id or f"{alert_data['alert_id']}-resolve-{uuid.uuid4().hex[:8]}"
+    
+    initial_state = {
+        "alert_data": alert_data,
+        "findings": [],
+        "resolution": {},
+        "next": "",
+        "messages": [],
+        "mode": "resolve",
+        "user_query": "",
+        "conversation_history": [],
+        "conversation_response": ""
+    }
+    
+    config = {"configurable": {"thread_id": fresh_thread_id}}
+    
+    iteration = 0
+    for state in app.stream(initial_state, config):
+        iteration += 1
+        if iteration > max_iterations:
+            yield {
+                "node": "error",
+                "error": "Max iterations reached",
+                "resolution": None
+            }
+            break
+        
+        for node_name, node_state in state.items():
+            findings = node_state.get("findings", [])
+            has_error = any("ERROR:" in f for f in findings)
+            
+            yield {
+                "node": node_name,
+                "state": node_state,
+                "findings": findings,
+                "has_error": has_error,
+                "resolution": node_state.get("resolution"),
+                "next": node_state.get("next", "")
+            }
+    
+    print("\n" + "█"*80)
+    print(f"█  WORKFLOW COMPLETED")
+    print("█"*80 + "\n")
+
+
 def run_conversation(app, alert_data, user_query, thread_id=None):
     """Run conversation through AARS workflow (Supervisor → Conversational Agent)"""
     
