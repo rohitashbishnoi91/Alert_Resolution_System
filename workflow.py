@@ -29,13 +29,11 @@ def create_aars_workflow():
         api_key=OPENAI_API_KEY
     )
     
-    members = ["investigator", "context_gatherer", "adjudicator", "conversational"]
-    
     investigator = create_investigator_agent(model)
     context_gatherer = create_context_gatherer_agent(model)
     adjudicator = create_adjudicator_agent(model)
     conversational = create_conversational_agent(model)
-    supervisor = create_supervisor_node(model, members)
+    supervisor = create_supervisor_node(model)
     aem_executor = create_aem_executor_node()
     
     workflow = StateGraph(AgentState)
@@ -90,47 +88,6 @@ def create_aars_workflow():
         print("⚠️  Checkpointing DISABLED - Cannot resume after failures")
     
     return app
-
-
-def run_alert_resolution(app, alert_data, thread_id=None):
-    """Run alert through AARS workflow (resolve mode)"""
-    
-    print("\n" + "█"*80)
-    print(f"█  AARS WORKFLOW STARTED")
-    print(f"█  Alert: {alert_data['alert_id']} | Scenario: {alert_data['scenario_code']}")
-    print("█"*80)
-    
-    initial_state = {
-        "alert_data": alert_data,
-        "findings": [],
-        "resolution": {},
-        "next": "",
-        "messages": [],
-        "mode": "resolve",
-        "user_query": "",
-        "conversation_history": [],
-        "conversation_response": ""
-    }
-    
-    config = {"configurable": {"thread_id": thread_id or alert_data['alert_id']}}
-    
-    final_state = None
-    for state in app.stream(initial_state, config):
-        final_state = state
-    
-    resolution = None
-    for key, value in final_state.items():
-        if "resolution" in value and value["resolution"]:
-            resolution = value["resolution"]
-            break
-    
-    print("\n" + "█"*80)
-    print(f"█  WORKFLOW COMPLETED")
-    if resolution:
-        print(f"█  Action: {resolution.get('action', 'N/A')}")
-    print("█"*80 + "\n")
-    
-    return resolution
 
 
 def run_conversation(app, alert_data, user_query, thread_id=None):

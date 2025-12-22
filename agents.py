@@ -215,7 +215,7 @@ Output ONLY the JSON resolution format."""
     return adjudicator_node
 
 
-def create_supervisor_node(model, members):
+def create_supervisor_node(model):
     """Supervisor - LLM-powered orchestrator of the multi-agent system"""
     
     supervisor_prompt = """You are the SUPERVISOR of AARS (Agentic Alert Resolution System).
